@@ -1,48 +1,51 @@
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase, WebRtcMode
 import speech_recognition as sr
 from googletrans import Translator
+import tempfile
+import wave
+import numpy as np
 
-# Streamlit page setup
+# Page setup
 st.set_page_config(page_title="Urdu to English Speech Translator", page_icon="🎤", layout="centered")
-
 st.title("🎤 Urdu → English Speech Translator")
-st.write("Speak in **Urdu**, and I will translate it into **English** for you!")
+st.write("🎙 Speak in **Urdu**, and I'll translate it into **English** for you! (Works on Mobile & Desktop)")
 
-# Translator object
 translator = Translator()
 
-# Function to capture and translate speech
-def recognize_and_translate():
-    recognizer = sr.Recognizer()
+class AudioProcessor(AudioProcessorBase):
+    def recv_audio(self, frame):
+        audio_data = frame.to_ndarray()
+        audio_data = np.int16(audio_data * 32767)  # Convert to 16-bit PCM
 
-    with sr.Microphone() as source:
-        st.info("🎙 Please speak now...")
-        recognizer.adjust_for_ambient_noise(source)
-        audio = recognizer.listen(source)
+        # Save audio to a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmpfile:
+            with wave.open(tmpfile.name, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(audio_data.tobytes())
+            
+            # Recognize and translate
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(tmpfile.name) as source:
+                audio = recognizer.record(source)
+            try:
+                urdu_text = recognizer.recognize_google(audio, language="ur-PK")
+                translation = translator.translate(urdu_text, src="ur", dest="en")
+                st.success(f"**You said (Urdu):** {urdu_text}")
+                st.info(f"**English Translation:** {translation.text}")
+            except Exception as e:
+                    st.error(f"Error: {e}")
 
-    try:
-        st.success("✅ Speech captured! Processing...")
-        with st.spinner("Processing audio..."):
-    # do recognition + translation
-        urdu_text = recognizer.recognize_google(audio, language="ur-PK")
-        st.write(f"**You said (Urdu):** {urdu_text}")
+        return frame
 
-        translation = translator.translate(urdu_text, src="ur", dest="en")
-        st.write(f"**English Translation:** {translation.text}")
+# WebRTC audio streamer (works in mobile browsers too)
+webrtc_streamer(
+    key="speech-translator",
+    mode=WebRtcMode.SENDONLY,
+    audio_processor_factory=AudioProcessor,
+    media_stream_constraints={"audio": True, "video": False}
+)
 
-    except sr.UnknownValueError:
-        st.error("Sorry, I could not understand the audio.")
-    except sr.RequestError:
-        st.error("Network error. Please check your connection.")
-
-# Button to trigger recognition
-if st.button("🎤 Start Recording"):
-    recognize_and_translate()
-
-st.markdown("---")
-st.caption("Built with Python, Streamlit, and Google Translate API")
-
-
-
-
-
+st.caption("📱 Works on mobile & desktop browsers — no extra software needed.")
